@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import asyncio
 import csv
 import os
 import time
@@ -127,7 +128,12 @@ def gather_npi_codes(fo):
     return {cell.value for cell in sheet[npi_col] if cell.value}
 
 
-def handle_npi_code(http_session, writer, npi_code):
+async def query_registry(http_session, npi_code):
+    resp = http_session.get(NPI_REGISTRY, params={'number': npi_code})
+    return resp.json() if resp.status_code == 200 else {}
+
+
+async def handle_npi_code(http_session, writer, npi_code):
     """Handle processing a NPI Code by querying the NPI registry and writing the codes to a specific file
 
     Uses a requests.Session to take advantage of connection pooling.
@@ -137,24 +143,21 @@ def handle_npi_code(http_session, writer, npi_code):
         writer (Writer)
         npi_code (str)
     """
-    resp = http_session.get(NPI_REGISTRY, params={'number': npi_code})
-    if resp.status_code != 200:
-        return
-    data = resp.json()
+    data = await query_registry(http_session, npi_code)
     if 'Errors' not in data and data['result_count'] > 0:
         writer.write(npi_code, [address for result in data['results'] for address in result['addresses']])
 
 
-def process_npi_codes(writer, npi_codes):
+async def process_npi_codes(writer, npi_codes):
     """Process a list of npi codes for lookup.
 
     Args:
         npi_codes (iterable)
     """
     with requests.Session() as s:
-        for npi_code in npi_codes:
-            handle_npi_code(s, writer, npi_code)
+        tasks = asyncio.gather(*[handle_npi_code(s, writer, npi_code) for npi_code in npi_codes])
 
+    await tasks
 
 if __name__ == '__main__':
     start = time.time()
@@ -163,6 +166,6 @@ if __name__ == '__main__':
         npi_codes = gather_npi_codes(fo)
 
     with Writer() as writer:
-        process_npi_codes(writer, npi_codes)
+        asyncio.run(process_npi_codes(writer, npi_codes))
 
     print(f'total execution time: {time.time() - start} seconds')

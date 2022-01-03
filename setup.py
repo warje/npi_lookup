@@ -12,5 +12,5 @@ setup(
         'requests',
         'openpyxl'
     ],
-    scripts=['bin/lookup_sync'],
+    scripts=['bin/lookup_sync, bin/lookup_async'],
 )

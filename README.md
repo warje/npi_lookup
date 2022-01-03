@@ -1,8 +1,13 @@
 # npi_lookup
 
+## Assumptions
+- All npi code + address combos are unique per file
+- All NPI registry responses with addresses will have a postal code
+
 ## Installation
 Requirements:
 - Python (3.10.1)
+- `openpyxl` compatability
 
 To install run the following commands:
 ```
@@ -29,3 +34,6 @@ Records written:
 total execution time: 33.89115524291992 seconds
 >
 ```
+
+### Async (Experimentation)
+Run `./lookup_async`
