@@ -25,6 +25,7 @@ Run the following command to execute the script:
 ### Example output
 ```
 > npi_lookup git:(main) ✗ lookup_sync
+Downloaded https://medicaid.ohio.gov/static/Providers/Enrollment+and+Support/ExclusionSuspensionList.xlsx
 Output files:
         odd - odd.csv
         even - even.csv
