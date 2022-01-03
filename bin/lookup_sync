@@ -1,0 +1,152 @@
+#!/usr/bin/env python
+
+import csv
+import os
+import time
+
+from contextlib import contextmanager
+from shutil import copyfileobj
+from tempfile import NamedTemporaryFile
+from urllib.request import urlopen
+
+import requests
+
+from openpyxl import load_workbook
+
+
+NPI_SOURCE = 'https://medicaid.ohio.gov/static/Providers/Enrollment+and+Support/ExclusionSuspensionList.xlsx'
+NPI_REGISTRY = 'https://npiregistry.cms.hhs.gov/api/?version=2.1&enumeration_type=NPI-1'
+
+
+def _format_address(obj):
+    """Creates an address string from a provided address object
+
+    Args:
+        obj (dict)
+
+    Returns:
+        str
+    """
+    result = [obj['address_1']]
+    if obj.get('address_2', None):
+        result.append(obj['address_2'])
+    result.append(obj['city'])
+    result.append(obj['state'])
+    result.append(obj['postal_code'])
+
+    return ' '.join(result)
+
+
+class Writer():
+    def __init__(self, path=''):
+        self.odd = os.path.join(path, 'odd.csv')
+        self.even = os.path.join(path, 'even.csv')
+        self.seen = {}
+        print('Output files:')
+        print(f'\todd - {self.odd}')
+        print(f'\teven - {self.even}')
+
+    def __enter__(self):
+        self.open_files()
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        print('Records written:')
+        print(f"\todd - {len(self.seen[self.odd_fo])}")
+        print(f"\teven - {len(self.seen[self.even_fo])}")
+        self.close_files()
+
+    def open_files(self):
+        self.odd_fo = open(self.odd, 'w')
+        self.even_fo = open(self.even, 'w')
+        self.seen.update({
+            self.odd_fo: {},
+            self.even_fo: {},
+        })
+
+    def close_files(self):
+        self.odd_fo.close()
+        self.even_fo.close()
+
+    def select_output(self, postal_code):
+        return self.even_fo if int(postal_code) % 2 == 0 else self.odd_fo
+
+    def write(self, npi_code, addresses):
+        """Writes a record to a csv file
+
+        Args:
+            npi_code (str)
+            address (list)
+        """
+        for address in addresses:
+            formatted = _format_address(address)
+            key = f'{npi_code},{formatted}'
+            selected = self.select_output(address['postal_code'])
+            if key not in self.seen[selected]:
+                csv_writer = csv.writer(selected)
+                csv_writer.writerow((npi_code, formatted))
+                self.seen[selected][key] = True
+
+
+@contextmanager
+def download_csv(uri):
+    """Download the csv (Excel) file
+
+    Args:
+        uri (str): URI of the file to download
+
+    Yields:
+        file-like object
+    """
+    with urlopen(uri) as resp:
+        with NamedTemporaryFile(suffix='.xlsx', delete=True) as fo:
+            copyfileobj(resp, fo)
+            yield fo
+
+
+def gather_npi_codes(fo):
+    """Pulls all unique NPI codes from the csv (Excel) file
+
+    Args:
+        fo (file-like object)
+
+    Returns:
+        set: NPI Codes
+    """
+    npi_col = 0
+    workbook = load_workbook(fo)
+    sheet = workbook.active
+    for col in sheet[1]:
+        if col.value.lower() == 'npi':
+            npi_col = col.column_letter
+            break
+
+    return {cell.value for cell in sheet[npi_col] if cell.value}
+
+
+def process_npi_code(http_session, writer, npi_code):
+    """Process a NPI Code querying the NPI registry and writing the codes to a specific file
+
+    Uses a requests.Session to take advantage of connection pooling.
+
+    Args:
+        http_session (requests.Session)
+        writer (Writer)
+        npi_code (str)
+    """
+    resp = http_session.get(NPI_REGISTRY, params={'number': npi_code})
+    if resp.status_code != 200:
+        return
+    data = resp.json()
+    if 'Errors' not in data and data['result_count'] > 0:
+        writer.write(npi_code, [address for result in data['results'] for address in result['addresses']])
+
+
+if __name__ == '__main__':
+    start = time.time()
+    with download_csv(NPI_SOURCE) as fo:
+        npi_codes = gather_npi_codes(fo)
+        with requests.Session() as s, Writer() as writer:
+            for npi_code in gather_npi_codes(fo):
+                process_npi_code(s, writer, npi_code)
+    print(f'total execution time: {time.time() - start} seconds')
