@@ -32,7 +32,7 @@ Run the following command to execute the script:
 
 ### Example output
 ```
-> npi_lookup git:(main) ✗ lookup_sync
+> npi_lookup git:(main) ✗ lookup_sync --dedup
 Downloaded https://medicaid.ohio.gov/static/Providers/Enrollment+and+Support/ExclusionSuspensionList.xlsx
 Output files:
         odd - odd.csv
