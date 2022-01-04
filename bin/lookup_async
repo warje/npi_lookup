@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 
+import argparse
 import asyncio
 import csv
 import os
 import time
 
+from os import environ
 from contextlib import contextmanager
 from shutil import copyfileobj
 from tempfile import NamedTemporaryFile
@@ -15,8 +17,8 @@ import requests
 from openpyxl import load_workbook
 
 
-NPI_SOURCE = 'https://medicaid.ohio.gov/static/Providers/Enrollment+and+Support/ExclusionSuspensionList.xlsx'
-NPI_REGISTRY = 'https://npiregistry.cms.hhs.gov/api/?version=2.1&enumeration_type=NPI-1'
+NPI_SOURCE = environ.get('NPI_SOURCE', 'https://medicaid.ohio.gov/static/Providers/Enrollment+and+Support/ExclusionSuspensionList.xlsx')
+NPI_REGISTRY = environ.get('NPI_REGISTRY', 'https://npiregistry.cms.hhs.gov/api/?version=2.1&enumeration_type=NPI-1')
 
 
 def _format_address(obj):
@@ -39,7 +41,8 @@ def _format_address(obj):
 
 
 class Writer():
-    def __init__(self, path=''):
+    def __init__(self, dedup=None, path=''):
+        self.dedup = dedup
         self.odd = os.path.join(path, 'odd.csv')
         self.even = os.path.join(path, 'even.csv')
         self.seen = {}
@@ -53,16 +56,16 @@ class Writer():
 
     def __exit__(self, *args, **kwargs):
         print('Records written:')
-        print(f"\todd - {len(self.seen[self.odd_fo])}")
-        print(f"\teven - {len(self.seen[self.even_fo])}")
+        print(f"\todd - {self.seen[self.odd_fo]['__count__']}")
+        print(f"\teven - {self.seen[self.even_fo]['__count__']}")
         self.close_files()
 
     def open_files(self):
         self.odd_fo = open(self.odd, 'w', newline='')
         self.even_fo = open(self.even, 'w', newline='')
         self.seen.update({
-            self.odd_fo: {},
-            self.even_fo: {},
+            self.odd_fo: {'__count__': 0},
+            self.even_fo: {'__count__': 0},
         })
         for fo in (self.odd_fo, self.even_fo):
             csv.writer(fo).writerow(('NPI', 'Address'))
@@ -85,10 +88,11 @@ class Writer():
             formatted = _format_address(address)
             key = f'{npi_code},{formatted}'
             selected = self.select_output(address['postal_code'])
-            if key not in self.seen[selected]:
+            if not (self.dedup and key in self.seen[selected]):
                 csv_writer = csv.writer(selected)
                 csv_writer.writerow((npi_code, formatted))
                 self.seen[selected][key] = True
+                self.seen[selected]['__count__'] += 1
 
 
 @contextmanager
@@ -160,12 +164,16 @@ async def process_npi_codes(writer, npi_codes):
     await tasks
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dedup', help='De-duplicate outputs per file', action='store_true')
+    args = parser.parse_args()
+
     start = time.time()
 
     with download_csv(NPI_SOURCE) as fo:
         npi_codes = gather_npi_codes(fo)
 
-    with Writer() as writer:
+    with Writer(dedup=args.dedup) as writer:
         asyncio.run(process_npi_codes(writer, npi_codes))
 
     print(f'total execution time: {time.time() - start} seconds')
